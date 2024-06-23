@@ -71,9 +71,10 @@ def prepare_dataset(image_dir, label_dir, output_dir, labeling, contrast=True, c
     lbl_output_dir = os.path.join(output_dir, 'labels')
     os.makedirs(img_output_dir, exist_ok=True)
     os.makedirs(lbl_output_dir, exist_ok=True)
-    image_files = sorted(glob.glob("{}/*.jpg".format(image_dir)))
+    image_files = sorted(glob.glob(f"{image_dir}/*.jpg"))
 
     # 새로운 해상도
+    hd_width, hd_height = 960, 540
     new_width, new_height = 640, 640
 
     for img_path in image_files:
@@ -86,7 +87,14 @@ def prepare_dataset(image_dir, label_dir, output_dir, labeling, contrast=True, c
         if detect_status:
             img = cv2.imread(img_path)
             original_height, original_width = img.shape[:2]
-            img_resized = cv2.resize(img, (new_width, new_height))
+
+            # FHD에서 HD로 변환
+            hd_img = cv2.resize(img, (hd_width, hd_height))
+            hd_height, hd_width = hd_img.shape[:2]
+
+            # HD에서 640x640으로 변환
+            img_resized = cv2.resize(hd_img, (new_width, new_height))
+    
             img_output_path = os.path.join(img_output_dir, os.path.basename(img_path))
             cv2.imwrite(img_output_path, img_resized)
 
@@ -100,40 +108,47 @@ def prepare_dataset(image_dir, label_dir, output_dir, labeling, contrast=True, c
                 with open(dst_lbl_path, 'w') as lf:
                     for line in lines:
                         label, x_center, y_center, width, height = map(float, line.strip().split())
-                        x_center = x_center * new_width / original_width
-                        y_center = y_center * new_height / original_height
-                        width = width * new_width / original_width
-                        height = height * new_height / original_height
-                        lf.write("{} {} {} {} {}\n".format(label, x_center, y_center, width, height))
+                        # FHD에서 HD로 변환
+                        x_center = x_center * hd_width / original_width
+                        y_center = y_center * hd_height / original_height
+                        width = width * hd_width / original_width
+                        height = height * hd_height / original_height
+                        # HD에서 640x640으로 변환
+                        x_center = x_center * new_width / hd_width
+                        y_center = y_center * new_height / hd_height
+                        width = width * new_width / hd_width
+                        height = height * new_height / hd_height
+                        lf.write(f"{label} {x_center} {y_center} {width} {height}\n")
 
             # 동일한 라벨 파일을 증강 이미지에 대해 생성
             if contrast:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, "{}_contrast.txt".format(os.path.splitext(os.path.basename(lbl_path))[0])))
+                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_contrast.txt"))
             if color:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, "{}_color.txt".format(os.path.splitext(os.path.basename(lbl_path))[0])))
+                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_color.txt"))
             if noise:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, "{}_noisy.txt".format(os.path.splitext(os.path.basename(lbl_path))[0])))
+                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_noisy.txt"))
             if blur:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, "{}_blur.txt".format(os.path.splitext(os.path.basename(lbl_path))[0])))
+                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_blur.txt"))
             if sharpen:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, "{}_sharpen.txt".format(os.path.splitext(os.path.basename(lbl_path))[0])))
+                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_sharpen.txt"))
 
             # 이미지 증강
             if contrast:
                 img_contrast = adjust_contrast(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, "{}_contrast.jpg".format(os.path.splitext(os.path.basename(img_path))[0])), img_contrast)
+                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_contrast.jpg"), img_contrast)
             if color:
                 img_color = adjust_color(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, "{}_color.jpg".format(os.path.splitext(os.path.basename(img_path))[0])), img_color)
+                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_color.jpg"), img_color)
             if noise:
                 img_noisy = add_noise(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, "{}_noisy.jpg".format(os.path.splitext(os.path.basename(img_path))[0])), img_noisy)
+                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_noisy.jpg"), img_noisy)
             if blur:
                 img_blur = apply_gaussian_blur(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, "{}_blur.jpg".format(os.path.splitext(os.path.basename(img_path))[0])), img_blur)
+                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_blur.jpg"), img_blur)
             if sharpen:
                 img_sharpen = apply_sharpening_filter(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, "{}_sharpen.jpg".format(os.path.splitext(os.path.basename(img_path))[0])), img_sharpen)
+                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_sharpen.jpg"), img_sharpen)
+
 
 
 def merge_datasets(original_dir, new_dir, merged_dir):
