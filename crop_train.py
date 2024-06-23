@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import os
 import json
 import glob
@@ -25,22 +23,11 @@ def adjust_color(image, hue_shift=10, saturation_scale=1.2):
     new_image = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
     return new_image
 
-def add_noise(image, noise_factor=0.005):
-    noise = np.random.randn(*image.shape) * 255 * noise_factor
-    noisy_image = image + noise.astype(np.float32)
-    noisy_image = np.clip(noisy_image, 0, 255).astype(np.uint8)
-    return noisy_image
-
-def apply_gaussian_blur(image, kernel_size=(3, 3), sigma=0.5):
-    blurred_image = cv2.GaussianBlur(image, kernel_size, sigma)
-    return blurred_image
-
-def apply_sharpening_filter(image, alpha=0.2):
-    kernel = np.array([[0, -1, 0], 
-                       [-1, 4 * alpha + 1, -1], 
-                       [0, -1, 0]])  # 약한 샤프니스 필터
-    sharpened_image = cv2.filter2D(image, -1, kernel)
-    return sharpened_image
+def rotate_image(image, angle):
+    center = (image.shape[1] // 2, image.shape[0] // 2)
+    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated = cv2.warpAffine(image, matrix, (image.shape[1], image.shape[0]))
+    return rotated
 
 def convert_to_yolo_format(label_file, output_dir, img_width, img_height):
     with open(label_file, 'r') as f:
@@ -66,18 +53,20 @@ def convert_to_yolo_format(label_file, output_dir, img_width, img_height):
                     lf.write("{} {} {} {} {}\n".format(label, x_center, y_center, width, height))
     return labeling_ten
 
-def prepare_dataset(image_dir, label_dir, output_dir, labeling, contrast=True, color=True, noise=False, blur=False, sharpen=False):
+def prepare_cropped_dataset(image_dir, label_dir, output_dir, labeling, contrast=True, color=True, angles=[-30, -15, 15, 30]):
     img_output_dir = os.path.join(output_dir, 'images')
     lbl_output_dir = os.path.join(output_dir, 'labels')
     os.makedirs(img_output_dir, exist_ok=True)
     os.makedirs(lbl_output_dir, exist_ok=True)
     image_files = sorted(glob.glob(f"{image_dir}/*.jpg"))
 
-    # 새로운 해상도
-    hd_width, hd_height = 960, 540
     new_width, new_height = 640, 640
+    label_count = {str(i): 0 for i in range(10)}
 
     for img_path in image_files:
+        if all(count >= 10 for count in label_count.values()):
+            break
+
         detect_status = False
         for labeling_data in labeling:
             if labeling_data in img_path:
@@ -88,66 +77,59 @@ def prepare_dataset(image_dir, label_dir, output_dir, labeling, contrast=True, c
             img = cv2.imread(img_path)
             original_height, original_width = img.shape[:2]
 
-            # FHD에서 HD로 변환
-            hd_img = cv2.resize(img, (hd_width, hd_height))
-            hd_height, hd_width = hd_img.shape[:2]
-
-            # HD에서 640x640으로 변환
-            img_resized = cv2.resize(hd_img, (new_width, new_height))
-    
-            img_output_path = os.path.join(img_output_dir, os.path.basename(img_path))
-            cv2.imwrite(img_output_path, img_resized)
-
+            # Load label file
             lbl_path = os.path.splitext(os.path.basename(img_path))[0] + '.txt'
             src_lbl_path = os.path.join(label_dir, lbl_path)
-            dst_lbl_path = os.path.join(lbl_output_dir, lbl_path)
 
-            if src_lbl_path != dst_lbl_path:
+            if os.path.exists(src_lbl_path):
                 with open(src_lbl_path, 'r') as lf:
                     lines = lf.readlines()
-                with open(dst_lbl_path, 'w') as lf:
-                    for line in lines:
-                        label, x_center, y_center, width, height = map(float, line.strip().split())
-                        # FHD에서 HD로 변환
-                        x_center = x_center * hd_width / original_width
-                        y_center = y_center * hd_height / original_height
-                        width = width * hd_width / original_width
-                        height = height * hd_height / original_height
-                        # HD에서 640x640으로 변환
-                        x_center = x_center * new_width / hd_width
-                        y_center = y_center * new_height / hd_height
-                        width = width * new_width / hd_width
-                        height = height * new_height / hd_height
-                        lf.write(f"{label} {x_center} {y_center} {width} {height}\n")
+                
+                for idx, line in enumerate(lines):
+                    label, x_center, y_center, width, height = map(float, line.strip().split())
+                    label = str(int(label))
+                    if label_count[label] >= 10:
+                        continue
 
-            # 동일한 라벨 파일을 증강 이미지에 대해 생성
-            if contrast:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_contrast.txt"))
-            if color:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_color.txt"))
-            if noise:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_noisy.txt"))
-            if blur:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_blur.txt"))
-            if sharpen:
-                shutil.copy(dst_lbl_path, os.path.join(lbl_output_dir, f"{os.path.splitext(os.path.basename(lbl_path))[0]}_sharpen.txt"))
+                    x1 = int((x_center - width / 2) * original_width)
+                    y1 = int((y_center - height / 2) * original_height)
+                    x2 = int((x_center + width / 2) * original_width)
+                    y2 = int((y_center + height / 2) * original_height)
 
-            # 이미지 증강
-            if contrast:
-                img_contrast = adjust_contrast(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_contrast.jpg"), img_contrast)
-            if color:
-                img_color = adjust_color(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_color.jpg"), img_color)
-            if noise:
-                img_noisy = add_noise(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_noisy.jpg"), img_noisy)
-            if blur:
-                img_blur = apply_gaussian_blur(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_blur.jpg"), img_blur)
-            if sharpen:
-                img_sharpen = apply_sharpening_filter(img_resized)
-                cv2.imwrite(os.path.join(img_output_dir, f"{os.path.splitext(os.path.basename(img_path))[0]}_sharpen.jpg"), img_sharpen)
+                    cropped_img = img[y1:y2, x1:x2]
+                    cropped_img_resized = cv2.resize(cropped_img, (new_width, new_height))
+
+                    cropped_img_name = f"{os.path.splitext(os.path.basename(img_path))[0]}_{idx}.jpg"
+                    img_output_path = os.path.join(img_output_dir, cropped_img_name)
+                    cv2.imwrite(img_output_path, cropped_img_resized)
+
+                    new_lbl_path = os.path.join(lbl_output_dir, f"{os.path.splitext(cropped_img_name)[0]}.txt")
+                    with open(new_lbl_path, 'w') as lf:
+                        lf.write(f"{label} 0.5 0.5 1.0 1.0\n")
+
+                    label_count[label] += 1
+
+                    # Data augmentation
+                    for angle in angles:
+                        rotated_img = rotate_image(cropped_img_resized, angle)
+                        rotated_img_name = f"{os.path.splitext(cropped_img_name)[0]}_rot{angle}.jpg"
+                        cv2.imwrite(os.path.join(img_output_dir, rotated_img_name), rotated_img)
+                        rotated_lbl_path = os.path.join(lbl_output_dir, f"{os.path.splitext(rotated_img_name)[0]}.txt")
+                        shutil.copy(new_lbl_path, rotated_lbl_path)
+
+                        if contrast:
+                            img_contrast = adjust_contrast(rotated_img)
+                            contrast_img_name = f"{os.path.splitext(rotated_img_name)[0]}_contrast.jpg"
+                            cv2.imwrite(os.path.join(img_output_dir, contrast_img_name), img_contrast)
+                            contrast_lbl_path = os.path.join(lbl_output_dir, f"{os.path.splitext(contrast_img_name)[0]}.txt")
+                            shutil.copy(new_lbl_path, contrast_lbl_path)
+
+                        if color:
+                            img_color = adjust_color(rotated_img)
+                            color_img_name = f"{os.path.splitext(rotated_img_name)[0]}_color.jpg"
+                            cv2.imwrite(os.path.join(img_output_dir, color_img_name), img_color)
+                            color_lbl_path = os.path.join(lbl_output_dir, f"{os.path.splitext(color_img_name)[0]}.txt")
+                            shutil.copy(new_lbl_path, color_lbl_path)
 
 def merge_datasets(original_dir, new_dir, merged_dir):
     for subdir in ['images', 'labels']:
@@ -192,7 +174,7 @@ if __name__ == "__main__":
     dataset_1_output_dir = os.path.join(script_dir, "yolo_dataset_1")
     label_dir = os.path.join(dataset_1_output_dir, 'labels')    
     labeling = convert_to_yolo_format(dataset_1_label_file, label_dir, img_width, img_height)
-    prepare_dataset(dataset_1_image_dir, label_dir, dataset_1_output_dir, labeling)
+    prepare_cropped_dataset(dataset_1_image_dir, label_dir, dataset_1_output_dir, labeling)
     
     # dataset_2
     dataset_2_image_dir = os.path.join(script_dir, "images_2")
@@ -200,7 +182,7 @@ if __name__ == "__main__":
     dataset_2_output_dir = os.path.join(script_dir, "yolo_dataset_2")
     label_dir = os.path.join(dataset_2_output_dir, 'labels')    
     labeling = convert_to_yolo_format(dataset_2_label_file, label_dir, img_width, img_height)
-    prepare_dataset(dataset_2_image_dir, label_dir, dataset_2_output_dir, labeling)
+    prepare_cropped_dataset(dataset_2_image_dir, label_dir, dataset_2_output_dir, labeling)
       
     # 데이터셋 병합
     merged_output_dir = os.path.join(script_dir, "yolo_dataset_merged")    
@@ -224,4 +206,4 @@ if __name__ == "__main__":
     else:
         print("Using CPU")
     
-    train_yolo_model(os.path.join(merged_output_dir, "data.yaml"), epochs=50, batch_size=2, learning_rate=0.001)
+    train_yolo_model(os.path.join(merged_output_dir, "data.yaml"), epochs=10, batch_size=2, learning_rate=0.001)
