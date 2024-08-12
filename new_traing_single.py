@@ -16,7 +16,7 @@ def convert_to_yolo_format(label_file, output_dir, img_width, img_height):
     os.makedirs(output_dir, exist_ok=True)
     labeling_ten = []
     for item in data['images']:
-        if len(item['annotations']) >= 5:
+        if len(item['annotations']) >= MAX_ANNOTATION_CNT:
             image_path = item['file']
             labeling_ten.append(image_path)
             base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -34,7 +34,8 @@ def convert_to_yolo_format(label_file, output_dir, img_width, img_height):
                     lf.write("{} {} {} {} {}\n".format(label, x_center, y_center, width, height))
     return labeling_ten
 
-def prepare_dataset(image_dir, label_dir, output_dir, labeling, new_width, new_height):
+def prepare_dataset(image_dir, label_dir, output_dir, labeling,
+                    img_width, img_height, new_width, new_height):
     img_output_dir = os.path.join(output_dir, 'images')
     lbl_output_dir = os.path.join(output_dir, 'labels')
     os.makedirs(img_output_dir, exist_ok=True)
@@ -64,11 +65,11 @@ def prepare_dataset(image_dir, label_dir, output_dir, labeling, new_width, new_h
                 with open(dst_lbl_path, 'w') as lf:
                     for line in lines:
                         label, x_center, y_center, width, height = map(float, line.strip().split())
-                        # FHD에서 HD로 변환
-                        x_center = x_center * hd_width / original_width
-                        y_center = y_center * hd_height / original_height
-                        width = width * hd_width / original_width
-                        height = height * hd_height / original_height
+                        
+                        x_center = x_center * new_width / img_width
+                        y_center = y_center * new_height / img_height
+                        width = width * new_width / img_width
+                        height = height * new_height / img_height
                         lf.write(f"{label} {x_center} {y_center} {width} {height}\n")              
 
 
@@ -86,9 +87,11 @@ def merge_datasets(dataset_dirs, output_dir, img_width, img_height, new_width, n
         print(f"Label file: {label_file}")
         if os.path.exists(image_dir) and os.path.exists(label_file):
             labeling = convert_to_yolo_format(label_file, combined_label_dir, img_width, img_height)
-            prepare_dataset(image_dir, combined_label_dir, output_dir, labeling, new_width, new_height)
+            prepare_dataset(image_dir, combined_label_dir,
+                            output_dir, labeling,
+                            img_width, img_height,
+                            new_width, new_height)
                 
-               
 
 def split_dataset(image_dir, label_dir, output_dir, val_size=0.2, test_size=0.1, random_state=42):
     image_files = glob.glob(os.path.join(image_dir, '*.jpg'))
@@ -131,6 +134,10 @@ def split_dataset(image_dir, label_dir, output_dir, val_size=0.2, test_size=0.1,
 def train_yolo_model(data_yaml_path, model_path='yolov8s.pt', epochs=100, batch_size=32, learning_rate=0.001, img_size=(960, 540)):
     model = YOLO(model_path)
 
+    print("\n\n###################################")
+    print("training start")
+    print(f"data_yaml_path: {data_yaml_path}\nmodel_path: {model_path}\nepochs: {epochs} batch_size {batch_size}, learning_rate {learning_rate}, image_size {img_size}")
+    print("###################################")
     model.train(
         data=data_yaml_path,
         epochs=epochs,
@@ -147,18 +154,23 @@ def train_yolo_model(data_yaml_path, model_path='yolov8s.pt', epochs=100, batch_
     model.save(model_save_path)
 
 if __name__ == "__main__":
-    img_width, img_height = 1920, 1080  # 원본 이미지 크기
-    new_width, new_height = 960, 544  # 새 이미지 크기
+    MAX_ANNOTATION_CNT = 1
+    
+    # img_width, img_height = 1920, 1080  # 원본 이미지 크기
+    img_width, img_height = 640, 480  # 원본 이미지 크기
+    new_width, new_height = 640, 480  # 새 이미지 크기
     
     # dataset 준비
     dataset_dirs = [
-        os.path.join(script_dir, "./images_1"),
-        os.path.join(script_dir, "./images_2"),
-        os.path.join(script_dir, "../data_sets/generates_images"),
-        os.path.join(script_dir, "../data_sets/Sample_1m_2nd"),
-        os.path.join(script_dir, "../data_sets/Sample_1m_3rd"),
-        os.path.join(script_dir, "../data_sets/Sample_1m_4th"),
-        # os.path.join(script_dir, "../data_sets/hand_image"),
+        os.path.join(script_dir, "../VISION_AI/sample_04"),
+        # os.path.join(script_dir, "./images_1"),
+        # os.path.join(script_dir, "./images_2"),
+        # os.path.join(script_dir, "../data_sets/generates_images"),
+        # os.path.join(script_dir, "../data_sets/Sample_1m_1st"),
+        # os.path.join(script_dir, "../data_sets/Sample_1m_2nd"),
+        # os.path.join(script_dir, "../data_sets/Sample_1m_3rd"),
+        # os.path.join(script_dir, "../data_sets/Sample_1m_4th"),
+        # os.path.join(script_dir, "../data_sets/hand_image"),        
         # 추가 데이터셋 폴더 경로를 여기에 추가
     ]
     
@@ -173,13 +185,13 @@ if __name__ == "__main__":
         os.path.join(output_dir, 'labels'),
         split_output_dir
     )
-    
+   
     # 학습을 위한 yaml 파일 생성
     data_yaml = """
     train: {}
     val: {}
-    nc: 10
-    names: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    nc: 2
+    names: ["0", "1"]
     """.format(os.path.join(train_dir, 'images'), os.path.join(val_dir, 'images'))
     
     with open(os.path.join(split_output_dir, "data.yaml"), 'w') as f:
@@ -193,4 +205,10 @@ if __name__ == "__main__":
         print("Using CPU")
     
     # 배치 크기 32로 설정
-    train_yolo_model(os.path.join(split_output_dir, "data.yaml"), epochs=50, batch_size=2, learning_rate=0.001, img_size=(new_width, new_height))
+    train_yolo_model(os.path.join(split_output_dir, "data.yaml"),  model_path='yolov10n.pt', epochs=50, batch_size=2, learning_rate=0.001, img_size=(new_width, new_height))
+
+    
+'''
+    nc: 10
+    names: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+'''
